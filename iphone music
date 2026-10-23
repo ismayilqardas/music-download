@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Musiqi Tətbiqi</title>
+    <link rel="manifest" href="manifest.json">
+    <style>
+        body { font-family: -apple-system, sans-serif; margin: 0; padding: 20px; background: #f0f0f5; padding-bottom: 70px; }
+        .tab-menu { display: flex; justify-content: space-around; background: #fff; padding: 15px; position: fixed; bottom: 0; left: 0; right: 0; box-shadow: 0 -2px 10px rgba(0,0,0,0.1); }
+        .tab-menu button { background: none; border: none; font-size: 16px; font-weight: bold; color: #007aff; cursor: pointer; }
+        .input-group { display: flex; gap: 10px; margin-bottom: 20px; }
+        input { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #ccc; outline: none; }
+        button.download { padding: 10px 20px; background: #007aff; color: white; border: none; border-radius: 8px; cursor: pointer; }
+        button.download:disabled { background: #999; cursor: not-allowed; }
+        .list { background: white; border-radius: 10px; padding: 10px; min-height: 50px; }
+        .list-item { padding: 10px; border-bottom: 1px solid #eee; display: flex; flex-direction: column; gap: 10px; }
+        .list-item p { margin: 0; font-weight: bold; }
+        audio { width: 100%; height: 40px; outline: none; }
+    </style>
+</head>
+<body>
+
+    <h2>Ümumi Kitabxana</h2>
+    
+    <div class="input-group">
+        <input type="text" id="linkInput" placeholder="YouTube, TikTok linkini yapışdır...">
+        <button class="download" id="downloadBtn" onclick="downloadMusic()">Yüklə</button>
+    </div>
+
+    <div class="list" id="musicList">
+        <!-- Yüklənən musiqilər burada görünəcək -->
+    </div>
+
+    <div class="tab-menu">
+        <button>Kitabxana</button>
+        <button>Papkalar</button>
+    </div>
+
+    <script>
+        // 1. IndexedDB Bazası Yaratmaq
+        let db;
+        const request = indexedDB.open("MusiqiBazasi", 1);
+
+        request.onupgradeneeded = function(event) {
+            db = event.target.result;
+            if (!db.objectStoreNames.contains("musiqiler")) {
+                db.createObjectStore("musiqiler", { keyPath: "id", autoIncrement: true });
+            }
+        };
+
+        request.onsuccess = function(event) {
+            db = event.target.result;
+            musiqileriGoster(); 
+        };
+
+        // 2. API istifadə edərək Musiqini Yükləmək
+        async function downloadMusic() {
+            let link = document.getElementById("linkInput").value;
+            let btn = document.getElementById("downloadBtn");
+            
+            if (!link) return alert("Zəhmət olmasa link daxil edin!");
+
+            try {
+                btn.innerText = "Çevrilir...";
+                btn.disabled = true;
+
+                // Cobalt API-yə linki göndəririk (Videonu səsə çevirmək üçün)
+                let apiCavabi = await fetch("https://api.cobalt.tools/api/json", {
+                    method: "POST",
+                    headers: {
+                        "Accept": "application/json",
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        url: link,
+                        isAudioOnly: true // Sadəcə səs faylı (mp3/m4a) istəyirik
+                    })
+                });
+
+                let data = await apiCavabi.json();
+                
+                if (data.status === "error" || !data.url) {
+                    throw new Error("Bu linki çevirmək mümkün olmadı. Başqa link yoxla.");
+                }
+
+                btn.innerText = "Yüklənir...";
+
+                // API-nin bizə verdiyi təmiz səs faylını yükləyirik
+                let response = await fetch(data.url);
+                let blob = await response.blob(); 
+                
+                // IndexedDB (Daxili yaddaşa) yazırıq
+                let transaction = db.transaction(["musiqiler"], "readwrite");
+                let store = transaction.objectStore("musiqiler");
+                
+                let yeniMusiqi = {
+                    // Random ad veririk, çünki həmişə API-dən ad gəlməyə bilər
+                    ad: "Musiqi - " + Math.floor(Math.random() * 10000), 
+                    fayl: blob,
+                    papka: "Umumi"
+                };
+                
+                store.add(yeniMusiqi);
+
+                transaction.oncomplete = function() {
+                    document.getElementById("linkInput").value = ""; 
+                    musiqileriGoster(); 
+                    alert("Musiqi uğurla yaddaşa yazıldı!");
+                };
+            } catch (error) {
+                alert("Xəta baş verdi: " + error.message);
+                console.error(error);
+            } finally {
+                btn.innerText = "Yüklə";
+                btn.disabled = false;
+            }
+        }
+
+        // 3. Yaddaşdakı musiqiləri oxumaq
+        function musiqileriGoster() {
+            let listDiv = document.getElementById("musicList");
+            listDiv.innerHTML = ""; 
+            
+            let transaction = db.transaction(["musiqiler"], "readonly");
+            let store = transaction.objectStore("musiqiler");
+            let request = store.getAll(); 
+
+            request.onsuccess = function(event) {
+                let musiqiler = event.target.result;
+                
+                if(musiqiler.length === 0) {
+                    listDiv.innerHTML = "<div class='list-item'>Hələ heç nə yüklənməyib.</div>";
+                    return;
+                }
+
+                musiqiler.forEach(musiqi => {
+                    let itemDiv = document.createElement("div");
+                    itemDiv.className = "list-item";
+                    
+                    let audioUrl = URL.createObjectURL(musiqi.fayl);
+                    
+                    itemDiv.innerHTML = `
+                        <p>🎵 ${musiqi.ad}</p>
+                        <audio controls src="${audioUrl}"></audio>
+                    `;
+                    listDiv.appendChild(itemDiv);
+                });
+            };
+        }
+    </script>
+</body>
+</html>
+{
+  "name": "Musiqi Yükləyici",
+  "short_name": "Musiqi",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#007aff",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
